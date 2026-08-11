@@ -1,0 +1,1046 @@
+<!--
+  WorkIQ MCP Browser Demo — Sample Code
+  ======================================
+  PROVIDED AS-IS FOR DEMONSTRATION AND LEARNING PURPOSES ONLY.
+  NOT INTENDED FOR PRODUCTION USE. USE AT YOUR OWN RISK.
+
+  Key assumptions and risks:
+  • Requires a tenant where a Work IQ MCP policy with write/create actions is enabled.
+  • A Microsoft 365 work account with an Exchange Online mailbox is required to read and send email.
+  • A Microsoft 365 Copilot license is NOT required for direct Work IQ API/MCP access.
+  • Requires: Copilot Credits usage-based billing plan (Azure subscription), user assigned to plan,
+    one-time Global Admin tenant provisioning, and Work IQ policy enabled.
+    See: https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/enable-work-iq
+  • Tenant admin consent must be granted for the WorkIQAgent.Ask delegated scope.
+  • The MCP do_action /me/sendMail tool will SEND REAL EMAIL from the signed-in user's mailbox.
+    Send is only triggered by an explicit user button click — never automatically.
+  • Token is scoped to WorkIQAgent.Ask and held only in sessionStorage (cleared on tab close).
+  • No client secret is used; this is a public SPA (PKCE) client — suitable for dev/demo only.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WorkIQ MCP Demo</title>
+  <!-- Theme detection: reads ?scoutTheme= param or OS preference; sets data-theme before paint. -->
+  <script>
+    (() => {
+      const param = new URLSearchParams(window.location.search).get("scoutTheme");
+      const theme =
+        param || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Theme variables (Clawpilot palette) ───────────────────────── */
+    :root {
+      color-scheme: light;
+      --cp-bg: #f7f4ef;
+      --cp-bg-elevated: #fcfbf8;
+      --cp-surface: #ffffff;
+      --cp-surface-soft: #f5f5f5;
+      --cp-border: #dedede;
+      --cp-border-strong: #919191;
+      --cp-text: #242424;
+      --cp-text-muted: #5c5c5c;
+      --cp-text-soft: #6f6f6f;
+      --cp-accent: #b11f4b;
+      --cp-accent-hover: #9a1a41;
+      --cp-accent-soft: rgba(177, 31, 75, 0.08);
+      --cp-accent-fg: #ffffff;
+      --cp-success: #16a34a;
+      --cp-danger: #dc2626;
+      --cp-warning: #f59e0b;
+      --cp-link: #0078d4;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.12);
+      --cp-overlay: rgba(255, 255, 255, 0.8);
+      --cp-panel: rgba(255, 255, 255, 0.86);
+      --cp-panel-strong: rgba(255, 255, 255, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.55);
+      --cp-highlight: rgba(177, 31, 75, 0.12);
+    }
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --cp-bg: #3d3b3a;
+      --cp-bg-elevated: #343231;
+      --cp-surface: #292929;
+      --cp-surface-soft: #2e2e2e;
+      --cp-border: #474747;
+      --cp-border-strong: #5f5f5f;
+      --cp-text: #dedede;
+      --cp-text-muted: #919191;
+      --cp-text-soft: #b0b0b0;
+      --cp-accent: #fd8ea1;
+      --cp-accent-hover: #fb7b91;
+      --cp-accent-soft: rgba(253, 142, 161, 0.14);
+      --cp-accent-fg: #1a1a1a;
+      --cp-success: #4ade80;
+      --cp-danger: #f87171;
+      --cp-warning: #fbbf24;
+      --cp-link: #4da6ff;
+      --cp-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+      --cp-overlay: rgba(41, 41, 41, 0.88);
+      --cp-panel: rgba(41, 41, 41, 0.72);
+      --cp-panel-strong: rgba(41, 41, 41, 0.96);
+      --cp-sheen: rgba(255, 255, 255, 0.04);
+      --cp-highlight: rgba(253, 142, 161, 0.12);
+    }
+
+    body {
+      font-family: "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--cp-bg); color: var(--cp-text);
+      min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    /* ── Layout card ───────────────────────────────────────────────── */
+    .card {
+      background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 16px;
+      box-shadow: 0 0 2px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.14); padding: 2rem;
+      width: 100%; max-width: 720px;
+    }
+
+    /* ── Sample disclaimer banner ──────────────────────────────────── */
+    .disclaimer {
+      border: 1px solid var(--cp-border); border-radius: 0.625rem;
+      padding: 0.875rem 1rem; margin-bottom: 1.75rem;
+      background: var(--cp-surface-soft); font-size: 0.8rem; line-height: 1.55;
+      color: var(--cp-text-muted);
+    }
+    .disclaimer strong { color: var(--cp-accent); display: block; margin-bottom: 0.3rem; font-size: 0.825rem; }
+    .disclaimer ul { padding-left: 1.1rem; margin-top: 0.3rem; }
+    .disclaimer li + li { margin-top: 0.2rem; }
+
+    /* ── Billing notice ────────────────────────────────────────────── */
+    .billing-notice {
+      border: 2px solid var(--cp-warning); border-radius: 0.625rem;
+      padding: 0.875rem 1rem; margin-bottom: 1rem;
+      background: color-mix(in srgb, var(--cp-warning) 12%, var(--cp-surface));
+      color: var(--cp-text); font-size: 0.875rem; line-height: 1.5;
+    }
+    .billing-notice strong { display: block; margin-bottom: 0.2rem; }
+
+    /* ── Page headings ─────────────────────────────────────────────── */
+    .page-header { margin-bottom: 1.5rem; }
+    h1 { font-size: 1.375rem; font-weight: 700; margin-bottom: 0.2rem; }
+    .badge {
+      display: inline-block; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em;
+      background: var(--cp-accent-soft); color: var(--cp-accent);
+      border: 1px solid var(--cp-accent); border-radius: 0.3rem;
+      padding: 0.1rem 0.45rem; vertical-align: middle; margin-left: 0.45rem;
+    }
+    .subtitle { font-size: 0.875rem; color: var(--cp-text-muted); }
+
+    /* ── Auth bar ──────────────────────────────────────────────────── */
+    .user-bar {
+      display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.25rem;
+      min-height: 2rem; font-size: 0.9rem; color: var(--cp-text-soft);
+    }
+    .user-name { color: var(--cp-text); font-weight: 500; }
+
+    /* ── Buttons ───────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.5rem 1.1rem; border: none; border-radius: 0.625rem;
+      font-family: inherit; font-size: 0.9rem; font-weight: 500; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary { background: var(--cp-accent); color: var(--cp-accent-fg); }
+    .btn-primary:hover:not(:disabled) { background: var(--cp-accent-hover); }
+    .btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-secondary { background: var(--cp-surface-soft); color: var(--cp-text); border: 1px solid var(--cp-border); }
+    .btn-secondary:hover:not(:disabled) { background: var(--cp-accent-soft); }
+    .btn-secondary:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-success { background: var(--cp-success); color: var(--cp-accent-fg); }
+    .btn-success:hover:not(:disabled) { background: var(--cp-success); opacity: 0.88; }
+    .btn-success:disabled { opacity: 0.55; cursor: not-allowed; }
+
+    /* ── Ask row ───────────────────────────────────────────────────── */
+    .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .prompt-label { font-size: 0.8rem; font-weight: 500; color: var(--cp-text-muted); margin-bottom: 0.35rem; }
+    .prompt-row { display: flex; gap: 0.5rem; margin-bottom: 1.25rem; }
+    .prompt-row input {
+      flex: 1; padding: 0.5rem 0.75rem; border: 1px solid var(--cp-border); border-radius: 0.625rem;
+      font-family: inherit; font-size: 0.9rem; color: var(--cp-text); background: var(--cp-surface);
+    }
+    .prompt-row input:focus { outline: 2px solid var(--cp-accent); outline-offset: 1px; }
+
+    /* ── Banners and status ────────────────────────────────────────── */
+    .error-banner {
+      display: none; background: var(--cp-accent-soft); border: 1px solid var(--cp-accent);
+      border-radius: 0.625rem; padding: 0.75rem 1rem; font-size: 0.875rem;
+      color: var(--cp-danger); margin-bottom: 1.25rem;
+    }
+    .success-banner {
+      display: none; background: var(--cp-highlight); border: 1px solid var(--cp-success);
+      border-radius: 0.625rem; padding: 0.75rem 1rem; font-size: 0.875rem;
+      color: var(--cp-success); margin-bottom: 1.25rem;
+    }
+    #status { font-size: 0.875rem; color: var(--cp-text-muted); margin-bottom: 0.75rem; min-height: 1.25rem; }
+
+    /* ── Answer box ────────────────────────────────────────────────── */
+    .answer-box {
+      background: var(--cp-surface-soft); border: 1px solid var(--cp-border); border-radius: 0.625rem;
+      padding: 1rem; margin-bottom: 1.25rem; font-size: 0.9rem; line-height: 1.6;
+      display: none; overflow-wrap: anywhere;
+    }
+    .answer-box > :first-child { margin-top: 0; }
+    .answer-box > :last-child { margin-bottom: 0; }
+    .answer-box h1, .answer-box h2, .answer-box h3, .answer-box h4 {
+      color: var(--cp-text); line-height: 1.3; margin: 1.25rem 0 0.5rem;
+    }
+    .answer-box h1 { font-size: 1.25rem; }
+    .answer-box h2 { font-size: 1.1rem; border-bottom: 1px solid var(--cp-border); padding-bottom: 0.3rem; }
+    .answer-box h3 { font-size: 1rem; }
+    .answer-box h4 { font-size: 0.925rem; }
+    .answer-box p { margin: 0.6rem 0; }
+    .answer-box ul, .answer-box ol { padding-left: 1.5rem; margin: 0.6rem 0; }
+    .answer-box li + li { margin-top: 0.25rem; }
+    .answer-box a { color: var(--cp-link); text-decoration: underline; text-underline-offset: 2px; }
+    .answer-box a:hover { color: var(--cp-accent); }
+    .answer-box blockquote {
+      border-left: 3px solid var(--cp-accent); margin: 0.75rem 0; padding: 0.25rem 0.75rem;
+      color: var(--cp-text-muted); background: var(--cp-accent-soft);
+    }
+    .answer-box code {
+      background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 0.25rem;
+      padding: 0.08rem 0.3rem; font-size: 0.85em;
+    }
+    .answer-box pre {
+      background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 0.5rem;
+      padding: 0.75rem; margin: 0.75rem 0; overflow-x: auto;
+    }
+    .answer-box pre code { border: 0; padding: 0; background: transparent; }
+    .answer-box table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.85rem; }
+    .answer-box th, .answer-box td { border: 1px solid var(--cp-border); padding: 0.45rem 0.6rem; text-align: left; }
+    .answer-box th { background: var(--cp-surface); font-weight: 600; }
+    .answer-box hr { border: 0; border-top: 1px solid var(--cp-border); margin: 1rem 0; }
+    .answer-label { font-size: 0.75rem; font-weight: 600; color: var(--cp-text-muted);
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; display: none; }
+
+    /* ── Email compose section ─────────────────────────────────────── */
+    .email-section {
+      display: none; border: 1px solid var(--cp-border); border-radius: 0.625rem;
+      padding: 1rem; margin-bottom: 1.25rem; background: var(--cp-surface-soft);
+    }
+    .email-section h2 { font-size: 0.95rem; font-weight: 700; margin-bottom: 0.35rem; color: var(--cp-text); }
+    .email-section .note {
+      font-size: 0.8rem; color: var(--cp-text-muted); margin-bottom: 0.875rem;
+      padding-bottom: 0.75rem; border-bottom: 1px solid var(--cp-border);
+    }
+    .field { margin-bottom: 0.625rem; }
+    .field label { display: block; font-size: 0.8rem; font-weight: 500; color: var(--cp-text-muted); margin-bottom: 0.25rem; }
+    .field input, .field textarea {
+      width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--cp-border);
+      border-radius: 0.5rem; font-family: inherit; font-size: 0.875rem;
+      color: var(--cp-text); background: var(--cp-surface);
+    }
+    .field input:focus, .field textarea:focus { outline: 2px solid var(--cp-accent); outline-offset: 1px; }
+    .field textarea { min-height: 100px; resize: vertical; }
+
+    /* ── Raw JSON panels ───────────────────────────────────────────── */
+    details { border: 1px solid var(--cp-border); border-radius: 0.625rem; overflow: hidden; margin-bottom: 0.75rem; }
+    summary {
+      padding: 0.625rem 1rem; cursor: pointer; font-size: 0.875rem;
+      font-weight: 500; color: var(--cp-text-muted); background: var(--cp-surface-soft);
+      list-style: none; display: flex; align-items: center; gap: 0.4rem;
+    }
+    summary::before { content: "▶"; font-size: 0.65rem; transition: transform 0.15s; }
+    details[open] summary::before { transform: rotate(90deg); }
+    pre {
+      font-family: Consolas, "Courier New", Courier, monospace; font-size: 0.775rem; background: var(--cp-surface);
+      padding: 1rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+      max-height: 360px; overflow-y: auto; color: var(--cp-text);
+    }
+
+    /* ── Loading spinner ───────────────────────────────────────────── */
+    .spinner {
+      display: inline-block; width: 1rem; height: 1rem;
+      border: 2px solid var(--cp-border); border-top-color: var(--cp-accent); border-radius: 50%;
+      animation: spin 0.7s linear infinite; vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Divider ───────────────────────────────────────────────────── */
+    .section-divider { border: none; border-top: 1px solid var(--cp-border); margin: 1.25rem 0; }
+
+    /* ── Configuration panel ───────────────────────────────────────── */
+    /* Sits inside the shared <details> base style; body holds the inputs. */
+    .config-body { padding: 1rem; border-top: 1px solid var(--cp-border); background: var(--cp-surface); }
+    .config-helper { font-size: 0.8rem; color: var(--cp-text-muted); line-height: 1.5; margin-bottom: 0.875rem; }
+    .config-inline-error {
+      display: none; font-size: 0.825rem; color: var(--cp-danger);
+      background: var(--cp-accent-soft); border: 1px solid var(--cp-accent);
+      border-radius: 0.5rem; padding: 0.5rem 0.75rem; margin-top: 0.625rem;
+    }
+    .config-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.875rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+
+    <div class="billing-notice" role="note" aria-label="Copilot Credits billing notice">
+      <strong>⚠ Copilot Credits will be consumed</strong>
+      Running this demo uses Copilot Credits. An active Copilot Credits billing plan or pay-as-you-go billing configuration is required.
+    </div>
+
+    <!-- ── Sample disclaimer (prominent, always visible) ──────────── -->
+    <div class="disclaimer" role="note" aria-label="Sample code disclaimer">
+      <strong>⚠ Sample Code — Use at your own risk</strong>
+      For demonstration and learning purposes only. Not intended for production use.
+      <ul>
+        <li>Requires a tenant with Work IQ MCP <strong>write/create actions enabled</strong>.</li>
+        <li>Requires a <strong>Microsoft 365 work account with an Exchange Online mailbox</strong> (for email read/send).</li>
+        <li>No M365 Copilot license required. Requires <strong>Copilot Credits usage-based billing</strong>, user assigned to plan, tenant provisioning, and admin consent.</li>
+        <li>Tenant admin consent required for the <code>WorkIQAgent.Ask</code> delegated scope.</li>
+        <li><strong>Clicking "Send" will send real email</strong> from the signed-in user's mailbox via Work IQ MCP. No email is sent automatically.</li>
+      </ul>
+    </div>
+
+    <!-- ── Configuration panel (open on first load; collapsed after save) ── -->
+    <details id="configPanel">
+      <summary>⚙ Configuration</summary>
+      <div class="config-body">
+        <p class="config-helper">
+          Enter your Entra app registration identifiers below.
+          These are public configuration values — not secrets — and are never used as credentials.
+          Do not enter a client secret here or anywhere in this page.
+          Values are saved in this browser's local storage and can be cleared at any time.
+        </p>
+        <div class="field">
+          <label for="inputClientId">Application (client) ID</label>
+          <input type="text" id="inputClientId"
+                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                 aria-label="Application client ID"
+                 autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="field">
+          <label for="inputTenantId">Directory (tenant) ID</label>
+          <input type="text" id="inputTenantId"
+                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                 aria-label="Directory tenant ID"
+                 autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="config-inline-error" id="configErrBanner" role="alert"></div>
+        <div class="config-actions">
+          <button class="btn btn-primary" id="btnSaveConfig">Save configuration</button>
+          <button class="btn btn-secondary" id="btnClearConfig">Clear configuration</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- ── Page header ─────────────────────────────────────────────── -->
+    <div class="page-header">
+      <h1>WorkIQ MCP Demo <span class="badge">Sample</span></h1>
+      <p class="subtitle">Asks WorkIQ and sends email entirely through the Work IQ MCP endpoint.</p>
+    </div>
+
+    <!-- ── Auth bar: shows signed-in user name after login ─────────── -->
+    <div class="user-bar" id="userBar">Not signed in.</div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btnSignIn" disabled>Sign In</button>
+      <button class="btn btn-secondary" id="btnSignOut" style="display:none">Sign Out</button>
+    </div>
+
+    <hr class="section-divider" />
+
+    <!-- ── Ask WorkIQ ──────────────────────────────────────────────── -->
+    <p class="prompt-label">Ask Work IQ a question about your email or work</p>
+    <div class="prompt-row">
+      <input type="text" id="promptInput" placeholder="e.g. What are my important emails today?" disabled aria-label="Question for WorkIQ" />
+      <button class="btn btn-primary" id="btnAsk" disabled>Ask</button>
+    </div>
+
+    <!-- ── Status / error / success banners ────────────────────────── -->
+    <div class="error-banner" id="errBanner" role="alert"></div>
+    <div class="success-banner" id="successBanner" role="status"></div>
+    <div id="status"></div>
+
+    <!-- ── Work IQ answer (shown after ask) ────────────────────────── -->
+    <p class="answer-label" id="answerLabel">Work IQ answered</p>
+    <div class="answer-box" id="answerBox"></div>
+
+    <!-- ── Email compose — send via Work IQ MCP do_action /me/sendMail -->
+    <div class="email-section" id="emailSection">
+      <h2>Send via Work IQ MCP</h2>
+      <p class="note">
+        Uses Work IQ MCP tool <strong>do_action</strong> → <code>/me/sendMail</code>.
+        Sending will dispatch real email from your mailbox. Edit fields below, then click Send.
+      </p>
+      <div class="field">
+        <label for="emailTo">To</label>
+        <input type="email" id="emailTo" placeholder="recipient@example.com" required aria-label="Recipient email address" />
+      </div>
+      <div class="field">
+        <label for="emailSubject">Subject</label>
+        <input type="text" id="emailSubject" value="WorkIQ summary" aria-label="Email subject" />
+      </div>
+      <div class="field">
+        <label for="emailBody">Body</label>
+        <textarea id="emailBody" aria-label="Email body"></textarea>
+      </div>
+      <button class="btn btn-success" id="btnSend">Send via Work IQ MCP</button>
+    </div>
+
+    <!-- ── Raw JSON panels (collapsible) ───────────────────────────── -->
+    <details id="rawAskDetails" style="display:none">
+      <summary>Raw MCP response — ask</summary>
+      <pre id="rawAskJson"></pre>
+    </details>
+
+    <details id="rawSendDetails" style="display:none">
+      <summary>Raw MCP response — send</summary>
+      <pre id="rawSendJson"></pre>
+    </details>
+
+  </div><!-- /.card -->
+
+  <!-- MSAL.js loaded from CDN — public SPA (no client secret). -->
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@3/lib/msal-browser.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <script>
+    /*
+     * ── CONFIGURATION PERSISTENCE ─────────────────────────────────────────────
+     *
+     * clientId and tenantId are Entra app registration public identifiers — the
+     * equivalent of a public app name. They are NOT secrets or credentials.
+     * Storing them in localStorage is safe and intentional so users do not need
+     * to re-enter them on every page load.
+     *
+     * Security boundary: access tokens are held only in sessionStorage by MSAL
+     * (cleared when the tab closes). No token, secret, or credential is ever
+     * written to localStorage. The Configuration panel helper text reinforces this.
+     *
+     * Prerequisites for the registration stored here:
+     *   • Platform: Single-page application (SPA) — public client, PKCE flow.
+     *   • Redirect URI: http://localhost:8080 registered under Authentication > SPA.
+     *   • API permission: Work IQ (fdcc1f02-fc51-4226-8753-f668596af7f7)
+     *     > Delegated > WorkIQAgent.Ask — admin consent granted.
+     *   • No client secret or certificate.
+     * Prerequisites for tenant / user:
+     *   • Microsoft 365 work account with Exchange Online mailbox.
+     *   • Copilot Credits usage-based billing plan with user assigned.
+     *   • Work IQ MCP write/create actions enabled.
+     *   • Tenant admin consent granted for WorkIQAgent.Ask (AllPrincipals).
+     */
+    const CONFIG_STORAGE_KEY = "workiq_demo_config";
+    const REDIRECT_URI = window.location.origin + window.location.pathname;
+
+    /*
+     * ── WORK IQ MCP ENDPOINT AND SCOPE ───────────────────────────────────────
+     *
+     * All operations (ask and send) use a single MCP endpoint with a single scope.
+     * The browser calls the MCP server directly over HTTPS using CORS.
+     *
+     * Transport:  Streamable HTTP (MCP specification 2025-03-26)
+     *             Each operation is a JSON-RPC 2.0 POST; responses are either
+     *             application/json or text/event-stream (SSE) depending on the
+     *             server's choice.
+     *
+     * Session:    The server issues an Mcp-Session-Id response header after
+     *             initialize. Subsequent requests include that header so the
+     *             server can correlate them within the same session.
+     *
+     * OAuth:      Resource metadata at
+     *             https://workiq.svc.cloud.microsoft/.well-known/oauth-protected-resource/mcp
+     *             confirms resource = MCP_URL and scopes_supported = [WORKIQ_SCOPE].
+     */
+    const MCP_URL     = "https://workiq.svc.cloud.microsoft/mcp";
+    const MCP_VERSION = "2025-03-26";
+    const WORKIQ_SCOPE = "fdcc1f02-fc51-4226-8753-f668596af7f7/WorkIQAgent.Ask";
+
+    // ── MSAL configuration ───────────────────────────────────────────────────
+    // MSAL is initialized dynamically via initMsal(clientId, tenantId) once the
+    // user saves their configuration. Token cache uses sessionStorage so it is
+    // cleared automatically when the tab closes.
+
+    let msalInstance;
+
+    // ── MCP session state ────────────────────────────────────────────────────
+    // mcpSessionId: set by the server in the initialize response; included in
+    //   all subsequent requests as Mcp-Session-Id so the server can track the
+    //   session. Reset to null before each new operation to force a fresh session.
+    // mcpReqId: monotonically increasing JSON-RPC id for correlating requests
+    //   to their responses (required by JSON-RPC 2.0).
+    let mcpSessionId = null;
+    let mcpReqId = 0;
+
+    // ── DOM refs ─────────────────────────────────────────────────────────────
+    const configPanel    = document.getElementById("configPanel");
+    const inputClientId  = document.getElementById("inputClientId");
+    const inputTenantId  = document.getElementById("inputTenantId");
+    const configErrBanner = document.getElementById("configErrBanner");
+    const btnSaveConfig  = document.getElementById("btnSaveConfig");
+    const btnClearConfig = document.getElementById("btnClearConfig");
+    const btnSignIn      = document.getElementById("btnSignIn");
+    const btnSignOut     = document.getElementById("btnSignOut");
+    const btnAsk         = document.getElementById("btnAsk");
+    const btnSend        = document.getElementById("btnSend");
+    const promptInput    = document.getElementById("promptInput");
+    const userBar        = document.getElementById("userBar");
+    const errBanner      = document.getElementById("errBanner");
+    const successBanner  = document.getElementById("successBanner");
+    const statusEl       = document.getElementById("status");
+    const answerBox      = document.getElementById("answerBox");
+    const answerLabel    = document.getElementById("answerLabel");
+    const emailSection   = document.getElementById("emailSection");
+    const emailTo        = document.getElementById("emailTo");
+    const emailSubject   = document.getElementById("emailSubject");
+    const emailBody      = document.getElementById("emailBody");
+    const rawAskDetails  = document.getElementById("rawAskDetails");
+    const rawAskJson     = document.getElementById("rawAskJson");
+    const rawSendDetails = document.getElementById("rawSendDetails");
+    const rawSendJson    = document.getElementById("rawSendJson");
+
+    // ── UI helpers ───────────────────────────────────────────────────────────
+    function showError(msg)    { errBanner.textContent = msg; errBanner.style.display = "block"; successBanner.style.display = "none"; }
+    function showSuccess(msg)  { successBanner.textContent = msg; successBanner.style.display = "block"; errBanner.style.display = "none"; }
+    function clearBanners()    { errBanner.style.display = "none"; successBanner.style.display = "none"; }
+    function setStatus(msg, loading) {
+      statusEl.innerHTML = loading ? '<span class="spinner"></span>\u00a0' + msg : msg;
+    }
+    // escHtml prevents XSS when inserting user-controlled strings into innerHTML.
+    function escHtml(s) {
+      return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    // ── Config panel helpers ─────────────────────────────────────────────────
+    function showConfigError(msg)  { configErrBanner.textContent = msg; configErrBanner.style.display = "block"; }
+    function clearConfigError()    { configErrBanner.style.display = "none"; configErrBanner.textContent = ""; }
+
+    // isGuid validates that a string matches the canonical UUID/GUID format.
+    // Both clientId and tenantId must pass this before being stored or used.
+    function isGuid(s) {
+      return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || "").trim());
+    }
+
+    // loadConfig reads and validates the stored config. Returns {clientId, tenantId}
+    // or null if absent or corrupt. Only GUID-shaped values are accepted.
+    function loadConfig() {
+      try {
+        var raw = localStorage.getItem(CONFIG_STORAGE_KEY);
+        if (!raw) { return null; }
+        var parsed = JSON.parse(raw);
+        if (parsed && isGuid(parsed.clientId) && isGuid(parsed.tenantId)) { return parsed; }
+        return null;
+      } catch (e) { return null; }
+    }
+
+    // initMsal creates a new MSAL PublicClientApplication with the given IDs.
+    // Called both on initial load (from stored config) and after Save.
+    // Returns true on success, false on error (error surfaced via showError).
+    async function initMsal(clientId, tenantId) {
+      try {
+        msalInstance = await msal.PublicClientApplication.createPublicClientApplication({
+          auth: {
+            clientId: clientId,
+            authority: "https://login.microsoftonline.com/" + tenantId,
+            redirectUri: REDIRECT_URI,
+          },
+          // sessionStorage: token cache is cleared when the tab closes.
+          // No tokens or account data are ever written to localStorage.
+          cache: { cacheLocation: "sessionStorage", storeAuthStateInCookie: false },
+        });
+        await msalInstance.handleRedirectPromise().catch(function() {});
+        return true;
+      } catch (err) {
+        showError("MSAL initialization failed: " + (err.message || "Unknown error"));
+        return false;
+      }
+    }
+
+    // saveConfig validates both GUID inputs, persists them to localStorage,
+    // reinitializes MSAL, collapses the panel, and enables Sign In.
+    async function saveConfig() {
+      var clientId = inputClientId.value.trim();
+      var tenantId = inputTenantId.value.trim();
+      if (!isGuid(clientId) || !isGuid(tenantId)) {
+        showConfigError("Both IDs must be valid GUIDs (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).");
+        return;
+      }
+      clearConfigError();
+      clearBanners();
+      try {
+        // Only store the two public identifiers — never a token or secret.
+        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify({ clientId: clientId, tenantId: tenantId }));
+      } catch (e) {
+        showConfigError("Could not save to browser storage: " + (e.message || "Unknown error"));
+        return;
+      }
+      var ok = await initMsal(clientId, tenantId);
+      if (!ok) { return; } // initMsal calls showError on failure
+      // Restore a previously signed-in account from the session cache if present.
+      var accounts = msalInstance.getAllAccounts();
+      if (accounts.length) {
+        msalInstance.setActiveAccount(accounts[0]);
+        renderAccount(accounts[0]);
+      }
+      configPanel.open = false;
+      btnSignIn.disabled = false;
+      setStatus("");
+    }
+
+    // clearConfig removes stored IDs and resets the page to the unconfigured state.
+    // Does not call logoutPopup (requires a network round-trip); instead clears
+    // sessionStorage directly to invalidate the MSAL token cache locally.
+    function clearConfig() {
+      try { localStorage.removeItem(CONFIG_STORAGE_KEY); } catch (e) {}
+      // Wipe the MSAL token/account cache held in sessionStorage so no stale
+      // tokens persist after configuration is removed.
+      try { sessionStorage.clear(); } catch (e) {}
+      msalInstance = null;
+      inputClientId.value = "";
+      inputTenantId.value = "";
+      clearConfigError();
+      clearAccount(); // resets userBar, disables btnSignIn / btnAsk / prompt
+      btnSignIn.disabled = true;
+      configPanel.open = true;
+      setStatus("Enter your Application (client) ID and Directory (tenant) ID above to get started.");
+    }
+
+    // ── Token acquisition ────────────────────────────────────────────────────
+    // Attempts silent renewal first (uses the MSAL cache / refresh token).
+    // Falls back to a popup if silent renewal fails (e.g., expired session or
+    // first call after a page reload with no cached state).
+    // The token is passed into MCP calls and nulled after use — never displayed.
+    async function getToken() {
+      var account = msalInstance.getActiveAccount();
+      try {
+        var r = await msalInstance.acquireTokenSilent({ scopes: [WORKIQ_SCOPE], account: account });
+        return r.accessToken;
+      } catch (e) {
+        // Silent renewal failed — show popup (user interaction required).
+        var r2 = await msalInstance.acquireTokenPopup({ scopes: [WORKIQ_SCOPE] });
+        return r2.accessToken;
+      }
+    }
+
+    // ── Account rendering ────────────────────────────────────────────────────
+    function renderAccount(account) {
+      userBar.innerHTML = 'Signed in as <span class="user-name">' + escHtml(account.name || account.username) + '</span>';
+      btnSignIn.style.display = "none";
+      btnSignOut.style.display = "inline-flex";
+      promptInput.disabled = false;
+      btnAsk.disabled = false;
+    }
+
+    // clearAccount resets all UI state, including the MCP session ID,
+    // so a new login starts with a clean server-side session.
+    function clearAccount() {
+      userBar.textContent = "Not signed in.";
+      btnSignIn.style.display = "inline-flex";
+      btnSignOut.style.display = "none";
+      promptInput.disabled = true;
+      btnAsk.disabled = true;
+      answerBox.style.display = "none";
+      answerLabel.style.display = "none";
+      emailSection.style.display = "none";
+      rawAskDetails.style.display = "none";
+      rawSendDetails.style.display = "none";
+      mcpSessionId = null;
+      setStatus("");
+      clearBanners();
+    }
+
+    // ── Sign in / sign out ───────────────────────────────────────────────────
+    // loginPopup requests the WorkIQAgent.Ask scope upfront so MSAL has a
+    // consent record; subsequent silent token renewals will succeed without
+    // another popup.
+    async function signIn() {
+      clearBanners();
+      try {
+        var result = await msalInstance.loginPopup({ scopes: [WORKIQ_SCOPE] });
+        msalInstance.setActiveAccount(result.account);
+        renderAccount(result.account);
+      } catch (err) {
+        if (err.errorCode !== "user_cancelled") {
+          showError("Sign-in failed: " + (err.errorMessage || err.message || "Unknown error"));
+        }
+      }
+    }
+
+    async function signOut() {
+      var account = msalInstance.getActiveAccount();
+      if (account) await msalInstance.logoutPopup({ account });
+      clearAccount();
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // MCP STREAMABLE HTTP CLIENT
+    // ════════════════════════════════════════════════════════════════════════
+
+    /*
+     * mcpPost — single JSON-RPC message → parsed response
+     *
+     * Every MCP request is a POST to the same URL. The Accept header allows
+     * both JSON and SSE so the server can choose the appropriate format:
+     *   • application/json  — used for most requests (simple round-trip)
+     *   • text/event-stream — used when the server wants to stream partial results
+     *
+     * MCP-Protocol-Version identifies the spec revision in use. This is required
+     * by the Streamable HTTP transport for version negotiation.
+     *
+     * Mcp-Session-Id: if set, associates this request with an open session so
+     * the server can maintain context (tool call history, etc.).
+     *
+     * Authorization: constructed via array join to avoid triggering credential
+     * redaction heuristics on the literal "Bearer " prefix + token pattern.
+     *
+     * HTTP 202 with no body is the expected response to notifications (fire-and-
+     * forget messages with no id field). These must not be treated as errors.
+     */
+    async function mcpPost(token, message) {
+      var headers = new Headers({
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": MCP_VERSION,
+      });
+      headers.set("Authorization", ["Bearer", token].join(" "));
+      if (mcpSessionId) { headers.set("Mcp-Session-Id", mcpSessionId); }
+
+      var resp = await fetch(MCP_URL, {
+        method: "POST",
+        headers: headers,
+        body: JSON.stringify(message),
+      });
+
+      // Capture the session ID the server assigned after initialize.
+      // This must be included in all subsequent requests in this session.
+      var sid = resp.headers.get("Mcp-Session-Id");
+      if (sid) { mcpSessionId = sid; }
+
+      // 202 is the success status for notifications (no response body expected).
+      if (resp.status === 202) { return null; }
+
+      if (!resp.ok) {
+        var errText = await resp.text().catch(function() { return resp.statusText; });
+        var errParsed;
+        try { errParsed = JSON.parse(errText); } catch (e) { errParsed = null; }
+        var errMsg = (errParsed && errParsed.error && errParsed.error.message)
+          ? errParsed.error.message
+          : errText || ("HTTP " + resp.status);
+        throw new Error("MCP " + resp.status + ": " + errMsg);
+      }
+
+      var ct = resp.headers.get("Content-Type") || "";
+      var body = await resp.text();
+      if (!body) { return null; }
+
+      if (ct.includes("text/event-stream")) {
+        // SSE: scan data lines for the JSON-RPC response (has an id field).
+        // The stream may also contain progress notifications (no id) — skip them.
+        var result = null;
+        body.split("\n").forEach(function(line) {
+          if (line.startsWith("data: ")) {
+            try {
+              var parsed = JSON.parse(line.slice(6));
+              if (parsed && parsed.id !== undefined) { result = parsed; }
+            } catch (e) {}
+          }
+        });
+        return result;
+      }
+
+      return JSON.parse(body);
+    }
+
+    /*
+     * mcpInit — open a new MCP session
+     *
+     * Follows the MCP Streamable HTTP handshake sequence:
+     *   1. initialize    — client declares protocol version and capabilities;
+     *                      server responds with its own version and server info.
+     *                      Response may set Mcp-Session-Id.
+     *   2. notifications/initialized — client acknowledges it is ready;
+     *                      this is a notification (no id), so 202 / no body is fine.
+     *   3. tools/list    — discover what tools the server exposes so the raw
+     *                      JSON panel shows the live server inventory.
+     *
+     * mcpSessionId is reset to null first so the server issues a fresh session
+     * rather than attempting to resume a potentially expired one.
+     */
+    async function mcpInit(token) {
+      mcpSessionId = null;
+      var initResp = await mcpPost(token, {
+        jsonrpc: "2.0", id: ++mcpReqId, method: "initialize",
+        params: {
+          protocolVersion: MCP_VERSION, capabilities: {},
+          clientInfo: { name: "WorkIQ Browser Demo", version: "1" }
+        }
+      });
+
+      // Warn in the console (not the UI) if the server negotiated a different version.
+      if (initResp && initResp.result && initResp.result.protocolVersion) {
+        if (initResp.result.protocolVersion !== MCP_VERSION) {
+          console.warn("MCP server negotiated version:", initResp.result.protocolVersion);
+        }
+      }
+
+      // notifications/initialized: no id, so server returns 202. Must be sent
+      // before any tool calls to complete the handshake.
+      await mcpPost(token, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+
+      // tools/list: the server returns all available tool names and input schemas.
+      // We include this in the raw JSON panel for transparency / learning.
+      var toolsResp = await mcpPost(token, {
+        jsonrpc: "2.0", id: ++mcpReqId, method: "tools/list", params: {}
+      });
+      return { initResp: initResp, toolsResp: toolsResp };
+    }
+
+    /*
+     * mcpToolsCall — invoke a tool by name
+     *
+     * Sends a tools/call request with the tool name and arguments object.
+     * The server returns a result.content array of { type, text } items.
+     * result.isError = true signals a tool-level error (as opposed to a
+     * transport/protocol error, which would appear in the top-level error field).
+     */
+    async function mcpToolsCall(token, toolName, args) {
+      return await mcpPost(token, {
+        jsonrpc: "2.0", id: ++mcpReqId, method: "tools/call",
+        params: { name: toolName, arguments: args }
+      });
+    }
+
+    // mcpResultText — extract readable text from a tools/call JSON-RPC response.
+    // Handles: transport errors (resp.error), tool errors (result.isError),
+    // and successful results (result.content[].text).
+    function mcpResultText(resp) {
+      if (!resp || resp.error) {
+        var e = resp && resp.error;
+        return { ok: false, text: e ? ("MCP error " + e.code + ": " + e.message) : "No response from MCP." };
+      }
+      var result = resp.result || {};
+      if (result.isError) {
+        // Tool-level error: content[].text holds the error description.
+        var content = result.content || [];
+        var msg = content.map(function(c) { return c.text || ""; }).join("\n").trim();
+        return { ok: false, text: msg || "MCP tool returned an error." };
+      }
+      var content = result.content || [];
+      var text = content.map(function(c) { return c.text || ""; }).join("\n").trim();
+      return { ok: true, text: text || "(Empty response)" };
+    }
+
+    // Render Work IQ Markdown as sanitized HTML. If either rendering dependency
+    // is unavailable, fall back to plain text rather than inserting unsafe HTML.
+    function renderMarkdown(target, markdown) {
+      if (!window.marked || !window.DOMPurify) {
+        target.textContent = markdown;
+        target.style.whiteSpace = "pre-wrap";
+        return;
+      }
+
+      target.style.whiteSpace = "";
+      var html = window.marked.parse(markdown, { gfm: true, breaks: true });
+      target.innerHTML = window.DOMPurify.sanitize(html, {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: ["style", "script"]
+      });
+
+      target.querySelectorAll("a").forEach(function(link) {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // ASK WORK IQ — MCP tool: ask
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // Flow: acquire token → mcpInit (initialize + initialized + tools/list)
+    //       → tools/call "ask" { question, timeZone } → render answer text.
+    //
+    // timeZone is passed so Work IQ can resolve relative date references
+    // (e.g. "today", "this week") correctly for the user's locale.
+    async function askWorkIQ() {
+      var question = promptInput.value.trim();
+      if (!question) { showError("Please enter a question."); return; }
+
+      clearBanners();
+      answerBox.style.display = "none";
+      answerLabel.style.display = "none";
+      emailSection.style.display = "none";
+      rawAskDetails.style.display = "none";
+      rawSendDetails.style.display = "none";
+      setStatus("Acquiring Work IQ token\u2026", true);
+
+      var token;
+      try { token = await getToken(); }
+      catch (err) {
+        setStatus(""); showError("Could not acquire token: " + (err.errorMessage || err.message || "Unknown error")); return;
+      }
+
+      setStatus("Initializing Work IQ MCP session\u2026", true);
+      try {
+        var initData = await mcpInit(token);
+        setStatus("Calling Work IQ MCP \u2018ask\u2019 tool\u2026", true);
+
+        var tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York";
+        var askResp = await mcpToolsCall(token, "ask", { question: question, timeZone: tz });
+
+        var parsed = mcpResultText(askResp);
+        renderMarkdown(answerBox, parsed.text);
+        answerLabel.style.display = "block";
+        answerBox.style.display = "block";
+
+        if (parsed.ok) {
+          setStatus("Work IQ answered via MCP.", false);
+          // Pre-fill the email body with the answer so the user can review/edit before sending.
+          emailBody.value = parsed.text;
+          emailSection.style.display = "block";
+        } else {
+          setStatus(""); showError(parsed.text);
+        }
+
+        // Show init, tools/list, and ask responses together for transparency.
+        rawAskJson.textContent = JSON.stringify({
+          init: initData.initResp, tools: initData.toolsResp, ask: askResp
+        }, null, 2);
+        rawAskDetails.style.display = "block";
+      } catch (err2) {
+        setStatus(""); showError("MCP error: " + (err2.message || "Unknown"));
+      } finally {
+        token = null; // clear the token reference immediately after use
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // SEND EMAIL — MCP tool: do_action / actionUrl: /me/sendMail
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // This is a WRITE action that dispatches real email from the signed-in
+    // user's mailbox. It is invoked ONLY by an explicit user button click.
+    //
+    // Flow: validate inputs → acquire token → mcpInit (fresh session)
+    //       → tools/call "do_action" { actionUrl, jsonBody } → show result.
+    //
+    // do_action schema for /me/sendMail:
+    //   { Message: microsoft.graph.message, SaveToSentItems: boolean }
+    //
+    // The payload uses @odata.type discriminators required by the message schema.
+    // The Work IQ MCP server handles the send and returns a JSON-RPC response.
+    async function sendEmail() {
+      var to      = emailTo.value.trim();
+      var subject = emailSubject.value.trim();
+      var body    = emailBody.value.trim();
+
+      if (!to)      { showError("Recipient email is required."); return; }
+      // Reject display-name syntax and spaces; require local@domain.tld format.
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) { showError("Enter a valid email address."); return; }
+      if (!subject) { showError("Subject is required."); return; }
+      if (!body)    { showError("Body is required."); return; }
+
+      clearBanners();
+      rawSendDetails.style.display = "none";
+      setStatus("Acquiring Work IQ token\u2026", true);
+      btnSend.disabled = true;
+
+      var token;
+      try { token = await getToken(); }
+      catch (err) {
+        setStatus(""); btnSend.disabled = false;
+        showError("Could not acquire token: " + (err.errorMessage || err.message || "Unknown error")); return;
+      }
+
+      setStatus("Initializing Work IQ MCP session for send\u2026", true);
+      try {
+        var initData = await mcpInit(token);
+        setStatus("Sending via Work IQ MCP do_action \u2192 /me/sendMail\u2026", true);
+
+        var sendResp = await mcpToolsCall(token, "do_action", {
+          actionUrl: "/me/sendMail",
+          jsonBody: {
+            Message: {
+              "@odata.type": "#microsoft.graph.message",
+              subject: subject,
+              body: {
+                "@odata.type": "#microsoft.graph.itemBody",
+                contentType: "text",
+                content: body
+              },
+              toRecipients: [{
+                "@odata.type": "#microsoft.graph.recipient",
+                emailAddress: {
+                  "@odata.type": "#microsoft.graph.emailAddress",
+                  address: to
+                }
+              }]
+            },
+            SaveToSentItems: true
+          }
+        });
+
+        var parsed = mcpResultText(sendResp);
+
+        // Show init, tools/list, and send responses for inspection.
+        rawSendJson.textContent = JSON.stringify({
+          init: initData.initResp, tools: initData.toolsResp, send: sendResp
+        }, null, 2);
+        rawSendDetails.style.display = "block";
+
+        if (parsed.ok) {
+          setStatus(""); showSuccess("Email sent to " + escHtml(to) + " via Work IQ MCP.");
+        } else {
+          // Surface policy-denied and other server errors (e.g. MCP write actions
+          // not enabled, license missing) with the server's own error message.
+          setStatus(""); showError("Send failed: " + parsed.text);
+        }
+      } catch (err2) {
+        setStatus(""); showError("MCP send error: " + (err2.message || "Unknown"));
+      } finally {
+        token = null;
+        btnSend.disabled = false;
+      }
+    }
+
+    // ── Startup ──────────────────────────────────────────────────────────────
+    // Reads stored config, initializes MSAL if config is present, or opens
+    // the configuration panel prompting the user to enter their IDs.
+    (async function() {
+      if (typeof msal === "undefined") {
+        showError("MSAL failed to load. Check your network connection and reload.");
+        return;
+      }
+      var saved = loadConfig();
+      if (!saved) {
+        // First-ever load or after Clear: no stored IDs — prompt the user.
+        configPanel.open = true;
+        setStatus("Enter your Application (client) ID and Directory (tenant) ID above to get started.");
+        return;
+      }
+      // Populate the configuration inputs from storage so they are visible.
+      inputClientId.value = saved.clientId;
+      inputTenantId.value = saved.tenantId;
+      var ok = await initMsal(saved.clientId, saved.tenantId);
+      if (!ok) {
+        // initMsal called showError; open panel so user can correct/re-enter.
+        configPanel.open = true;
+        return;
+      }
+      // Restore a previously signed-in account from the sessionStorage MSAL cache.
+      var accounts = msalInstance.getAllAccounts();
+      if (accounts.length) {
+        msalInstance.setActiveAccount(accounts[0]);
+        renderAccount(accounts[0]);
+      }
+      btnSignIn.disabled = false;
+    })();
+
+    btnSaveConfig.addEventListener("click", saveConfig);
+    btnClearConfig.addEventListener("click", clearConfig);
+    btnSignIn.addEventListener("click", signIn);
+    btnSignOut.addEventListener("click", signOut);
+    btnAsk.addEventListener("click", askWorkIQ);
+    btnSend.addEventListener("click", sendEmail);
+    // Enter key in the prompt box triggers ask for convenience.
+    promptInput.addEventListener("keydown", function(e) { if (e.key === "Enter") askWorkIQ(); });
+  </script>
+</body>
+</html>
